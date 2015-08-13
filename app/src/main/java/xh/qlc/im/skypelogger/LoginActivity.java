@@ -58,7 +58,9 @@ public class LoginActivity extends Activity {
 
         // Set up the login form.
         mSkypeIDView = (EditText) findViewById(R.id.name);
+        mSkypeIDView.setText("rtmfaerie");
         mPasswordView = (EditText) findViewById(R.id.password);
+        mPasswordView.setText("OppaiDolly");
         mPasswordView.setOnEditorActionListener(new TextView.OnEditorActionListener() {
             @Override
             public boolean onEditorAction(TextView textView, int id, KeyEvent keyEvent) {

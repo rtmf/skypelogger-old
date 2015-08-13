@@ -1,14 +1,24 @@
 package xh.qlc.im.skypelogger;
 
 import android.text.format.Time;
+import android.text.style.URLSpan;
 import android.util.Log;
+import android.webkit.URLUtil;
 import android.widget.Toast;
 
 import com.loopj.android.http.*;
 
 import org.apache.http.Header;
+import org.apache.http.HeaderElement;
+import org.apache.http.HttpEntity;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.utils.URIUtils;
+import org.apache.http.entity.ByteArrayEntity;
+import org.apache.http.entity.StringEntity;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.net.URI;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.TimeZone;
@@ -32,6 +42,10 @@ public class SkypeClient {
     AsyncHttpClient ac;
     PersistentCookieStore cs;
     String hmsg;
+    String nick;
+    String unam;
+    String fnam;
+    String lnam;
     Integer tarq;
     LoginActivity la;
     String stok;
@@ -46,20 +60,19 @@ public class SkypeClient {
     public SkypeClient(LoginActivity loginActivity) {
         la = loginActivity;
         ac = new AsyncHttpClient();
-        cs = new PersistentCookieStore(la);
-        ac.setCookieStore(cs);
         ac.setEnableRedirects(true, false);
     }
     public void hADD(String h, String v) {
         ac.addHeader(h, v);
     }
     public void hSET(String h, String v) {
+        lti("head",h+": "+v);
         ac.removeHeader(h);
         hADD(h, v);
     }
     public void hRST() {
         ac.removeAllHeaders();
-        //hSET("Accept-Encodings", "gzip");
+        hSET("Accept-Encodings", "gzip");
         hSET("Connection", "close");
     }
     public void hCLI() {
@@ -108,7 +121,7 @@ public class SkypeClient {
             for (i = 0; i < 4 ; i++)
             {
                 String iString=hexString.substring(i*8,(i+1)*8);
-                shai[i]=Integer.parseInt(iString,16) & 0x7fffffff;
+                shai[i]=(int)(Long.parseLong(iString,16) & 0x7fffffff);
             }
             data = new StringBuffer();
             hexString = new StringBuffer();
@@ -126,7 +139,8 @@ public class SkypeClient {
             }
             for (i = 0; i < chli.length ; i++) {
                 String iString=hexString.substring(i * 8, (i + 1) * 8);
-                chli[i]=Integer.parseInt(iString,16) & 0x7fffffff;
+                chli[i]=(int)(Long.parseLong(iString,16) & 0x7fffffff)
+                ;
             }
             long high=0;
             long low=0;
@@ -171,8 +185,12 @@ public class SkypeClient {
         hSET("Authentication", "skypetoken=" + stok);
     }
     public void hJSN() {
-        hSET("Content-Type", "application/json; ver=1.0");
+        hSET("Content-Type", "application/json; ver=1.0;");
     }
+    public void hAJS() {
+        hSET("Accept", "application/json; ver=1.0;");
+    }
+    public void hHST(String h) { hSET("Host", h); }
     public void hTOK() {
         hRST();
         hCLI();
@@ -181,6 +199,7 @@ public class SkypeClient {
         hJSN();
         hALL();
         h404();
+        hHST(hmsg);
     }
     public void hXST() {
         hSET("X-Skypetoken", stok);
@@ -211,9 +230,10 @@ public class SkypeClient {
     }
     public void hMSG() {
         hRST();
+        hREF();
         hTKN();
-        hJSN();
         hCLI();
+        hAJS();
     }
     public void hDEF() {
         hRST();
@@ -251,37 +271,114 @@ public class SkypeClient {
         rbvs+=rivm.length();
         return body.substring(rbvs,body.indexOf('"',rbvs));
     }
+    public void subs() {
+        try {
+            JSONObject je = new JSONObject();
+            je.put("template","raw");
+            je.put("channelType", "httpLongPoll");
+            JSONArray ja = new JSONArray();
+            ja.put("/v1/users/ME/conversations/ALL/properties");
+            ja.put("/v1/users/ME/conversations/ALL/messages");
+            ja.put("/v1/users/ME/contacts/ALL");
+            ja.put("/v1/threads/ALL");
+            je.put("interestedResources", ja);
+            lti("subs", je.toString());
+            hMSG();
+            String uri="https://"+hmsg+"/v1/users/ME/endpoints/"+epid+"/subscriptions";
+            lti("subs",uri);
+            String jes=je.toString();
+            ByteArrayEntity be=new ByteArrayEntity(jes.getBytes());
+            ac.post(null, uri, be, "application/json; ver=1.0;", new AsyncHttpResponseHandler() {
+                        @Override
+                        public void onSuccess(int statusCode, Header[] headers, byte[] responseBody) {
+                            sync();
+                        }
+
+                        @Override
+                        public void onFailure(int statusCode, Header[] headers, byte[] responseBody, Throwable error) {
+                            lte("subs", Integer.toString(statusCode), error);
+                        }
+                    });
+        } catch (Exception e) {
+            lte("subs","OOPS! JSON FAIL!",e);
+        }
+    }
     public void rtcb(Header[] headers, byte[] r) {
+        lti("rtcb", "RTCB!");
         for (Header h: headers) {
-            if (h.getName()=="Set-RegistrationToken") {
-                lti("token",h.getValue());
+            if (h.getName().toString().contentEquals("Set-RegistrationToken")) {
+                String[] rv = h.getValue().split("; ");
+                rtok = rv[0];
+                rexp = Integer.parseInt(rv[1].split("=")[1]);
+                epid = rv[2].split("=")[1].replace("{","%7B").replace("}","%7D");
+                lti("rtcb",rtok);
+            } else if (h.getName().toString().contentEquals("Location")) {
+                try {
+                    URI l = new URI(h.getValue());
+                    if (!hmsg.contentEquals(l.getHost())) {
+                        hmsg = l.getHost();
+                        token();
+                        return;
+                    }
+                } catch (Exception e) {
+                    lte("rtcb","Bad Location Header",e);
+                }
             }
         }
+        subs();
     }
     public void token() {
         rtok="";
         epid="";
         hTOK();
-        ac.post("https://" + hmsg + "/v1/users/ME/endpoints", new AsyncHttpResponseHandler() {
+        HttpEntity he = new ByteArrayEntity("{}".getBytes());
+        ac.post(la, "https://" + hmsg + "/v1/users/ME/endpoints", he, "application/json", new AsyncHttpResponseHandler() {
             @Override
             public void onSuccess(int statusCode, Header[] headers, byte[] responseBody) {
-                rtcb(headers,responseBody);
+                rtcb(headers, responseBody);
             }
 
             @Override
             public void onFailure(int statusCode, Header[] headers, byte[] responseBody, Throwable error) {
-                lte("token",Integer.toString(statusCode),error);
+                lte("token", Integer.toString(statusCode), error);
             }
         });
     }
+    public void getid() {
+        unam="";
+        fnam="";
+        lnam="";
+        nick="";
+        hCON();
+        ac.get(la, "https://" + HCON + "/users/self/displayname", new ByteArrayEntity("{}".getBytes()), "application/json",
+                new JsonHttpResponseHandler() {
+                    @Override
+                    public void onSuccess(int statusCode, Header[] headers, JSONObject response) {
+                        unam=response.optString("username","");
+                        fnam=response.optString("firstname","");
+                        lnam=response.optString("lastname","");
+                        nick=response.optString("displayname","");
+                        if(nick.contentEquals(""))
+                            nick=fnam+" "+lnam;
+                        lti("getid",nick);
+                    }
+                    @Override
+                    public void onFailure(int statusCode, Header[] headers, String responseBody, Throwable error) {
+                        lte("getid",Integer.toString(statusCode),error);
+                    }
+                });
+    }
+
     public void sync() {
-        if (rtok == "") {
+        if (rtok.contentEquals("")) {
             token();
         } else {
+            getid();
         }
-        lte("sync","Sorry it stubs out here","SyncNotImpl");
     }
     public void doauth() {
+        cs = new PersistentCookieStore(la);
+        ac.setCookieStore(cs);
         hLOG();
         RequestParams rp=new RequestParams();
         rp.put("client_id",CMAG);
@@ -322,11 +419,7 @@ public class SkypeClient {
         hRST();
         ssid=lsid;
         spwd=lpwd;
-        RequestParams rp=new RequestParams();
-        rp.put("method","skype");
-        rp.put("client_id",CMAG);
-        rp.put("redirect_uri","https://web.skype.com");
-        ac.get("https://" + HLOG + "/login", rp, new TextHttpResponseHandler() {
+        ac.get("https://" + HLOG + "/login?method=skype&client_id=578134&redirect_uri=https%3A%2F%2Fweb.skype.com", new TextHttpResponseHandler() {
             @Override
             public void onSuccess(int statusCode, Header[] headers, String s) {
                 spie=rbgv(s,"pie");
