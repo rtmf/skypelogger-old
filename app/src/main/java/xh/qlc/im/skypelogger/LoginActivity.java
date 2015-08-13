@@ -89,9 +89,7 @@ public class LoginActivity extends Activity {
      * errors are presented and no actual login attempt is made.
      */
     public void attemptLogin() {
-        if (mSC == null) {
-            mSC = new SkypeClient(this);
-        }
+        mSC = new SkypeClient(this);
 
         // Reset errors.
         mSkypeIDView.setError(null);
