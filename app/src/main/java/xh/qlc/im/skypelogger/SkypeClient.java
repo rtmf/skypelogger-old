@@ -66,7 +66,7 @@ public class SkypeClient {
         ac.addHeader(h, v);
     }
     public void hSET(String h, String v) {
-        lti("head",h+": "+v);
+        lti("head", h + ": " + v);
         ac.removeHeader(h);
         hADD(h, v);
     }
@@ -265,11 +265,114 @@ public class SkypeClient {
         String rivm="\""+name+"\" value=\"";
         int rbvs=body.indexOf(rivm);
         if (rbvs==-1) {
-            lte(name,body,"NotFound");
+            lte(name, body, "NotFound");
             return null;
         }
         rbvs+=rivm.length();
         return body.substring(rbvs,body.indexOf('"',rbvs));
+    }
+    public void pollcb(JSONObject response) {
+        JSONArray ja = response.optJSONArray("eventMessages");
+        if (ja!=null) {
+            for (int i = 0; i < ja.length(); i++) {
+                JSONObject jo=ja.optJSONObject(i);
+                if (jo!=null) {
+                    if (jo.optString("resourceType","").contentEquals("NewMessage")) {
+                        JSONObject m=jo.optJSONObject("resource");
+                        if (m!=null) {
+                            String mt=m.optString("messagetype","");
+                            if (mt.contentEquals("Text") || mt.contentEquals("RichText")) {
+                                String oat=m.optString("originalarrivaltime","nowhen");
+                                String idn=m.optString("imdisplayname","nobody");
+                                String msg=m.optString("content","").trim();
+                                lti("incoming_message",oat+"|"+idn+">"+msg);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            token();
+            return;
+        }
+    }
+    public void poll() {
+        hMSG();
+        lti("poll","POLLING");
+        ac.post("https://" + hmsg + "/v1/users/ME/endpoints/"+epid+"/subscriptions/0/poll",
+                new JsonHttpResponseHandler() {
+                @Override
+                public void onStart() {
+                }
+
+                @Override
+                public void onSuccess(int statusCode, Header[] headers, JSONObject response) {
+                    pollcb(response);
+                    poll();
+                }
+
+                @Override
+                public void onFailure(int statusCode, Header[] headers, Throwable error, JSONObject response) {
+                    if (response != null) {
+                        lte("poll", this.getRequestURI().toString(), "nodice");
+                        lte("poll", response.toString(), "returnedThis");
+                        lte("poll", Integer.toString(statusCode), error);
+                        if (response.optInt("errorCode", 0) == 729)
+                            token();
+                        else
+                            poll();
+                    } else {
+                        lti("poll","polling again...");
+                        poll();                    }
+                }
+            });
+    }
+    public void buds() {
+        hCON();
+        //TODO urlencode(unam)
+        ac.get("https://"+HCNV+"/contacts/v1/users/"+unam+"/contacts", new JsonHttpResponseHandler() {
+            @Override
+            public void onSuccess(int statusCode, Header[] headers, JSONObject response) {
+                try {
+                    lti("buds",response.toString());
+                    JSONArray b2sa = new JSONArray();
+                    JSONArray c=response.getJSONArray("contacts");
+                    for (int i = 0; i < c.length(); i++) {
+                        JSONObject b = c.getJSONObject(i);
+                        String sn = b.optString("id", "");
+                        if (!sn.contentEquals("")) {
+                            JSONObject b2s = new JSONObject();
+                            b2s.put("id", "8:" + sn);
+                            b2sa.put(b2s);
+                        }
+                    }
+                    JSONObject bs = new JSONObject();
+                    bs.put("contacts", b2sa);
+                    hMSG();
+                    lti("buds",bs.toString());
+                    ac.post(null, "https://" + hmsg + "/v1/users/ME/contacts", new ByteArrayEntity(bs.toString().getBytes()), "application/json; ver=1.0;",
+                            new AsyncHttpResponseHandler() {
+                                @Override
+                                public void onSuccess(int statusCode, Header[] headers, byte[] responseBody) {
+                                    lti("buds", "subscribed to buds!");
+                                    link();
+                                }
+
+                                @Override
+                                public void onFailure(int statusCode, Header[] headers, byte[] responseBody, Throwable error) {
+                                    lte("buds", Integer.toString(statusCode), error);
+                                    link();
+                                }
+                            });
+                } catch (Exception e) {
+                    lte("buds", "Oops", e);
+                };
+            }
+            @Override
+            public void onFailure(int statusCode, Header[] headers, String responseBody, Throwable error) {
+                lte("buds",Integer.toString(statusCode),error);
+            }
+        });
     }
     public void subs() {
         try {
@@ -291,7 +394,7 @@ public class SkypeClient {
             ac.post(null, uri, be, "application/json; ver=1.0;", new AsyncHttpResponseHandler() {
                         @Override
                         public void onSuccess(int statusCode, Header[] headers, byte[] responseBody) {
-                            sync();
+                            poll();
                         }
 
                         @Override
@@ -354,23 +457,90 @@ public class SkypeClient {
                 new JsonHttpResponseHandler() {
                     @Override
                     public void onSuccess(int statusCode, Header[] headers, JSONObject response) {
-                        unam=response.optString("username","");
-                        fnam=response.optString("firstname","");
-                        lnam=response.optString("lastname","");
-                        nick=response.optString("displayname","");
-                        if(nick.contentEquals(""))
-                            nick=fnam+" "+lnam;
-                        lti("getid",nick);
+                        unam = response.optString("username", "");
+                        fnam = response.optString("firstname", "");
+                        lnam = response.optString("lastname", "");
+                        nick = response.optString("displayname", "");
+                        if (nick.contentEquals(""))
+                            nick = fnam + " " + lnam;
+                        lti("getid", nick);
+                        buds();
                     }
+
                     @Override
                     public void onFailure(int statusCode, Header[] headers, String responseBody, Throwable error) {
-                        lte("getid",Integer.toString(statusCode),error);
+                        lte("getid", Integer.toString(statusCode), error);
+                        buds();
                     }
                 });
     }
+    public void lunk() {
+        try {
+            JSONObject jo = new JSONObject();
+            jo.put("id", "messagingService");
+            jo.put("type", "EndpointPresenceDoc");
+            jo.put("selfLink", "uri");
+            JSONObject ji = new JSONObject();
+            hMSG();
+            ji.put("epname", "skype");
+            jo.put("privateInfo", ji);
+            ji = new JSONObject();
+            ji.put("capabilities", "");
+            ji.put("type", 1);
+            ji.put("typ", 1);
+            ji.put("skypeNameVersion", VERS + "/" + NAME);
+            ji.put("nodeInfo", "xx");
+            jo.put("publicInfo", ji);
+            ac.put(null, "https://" + hmsg + "/v1/users/ME/endpoints/" + epid + "/presenceDocs/messagingService",
+                    new ByteArrayEntity(jo.toString().getBytes()), "application/json; ver=1.0;",
+                    new AsyncHttpResponseHandler() {
+                        @Override
+                        public void onSuccess(int statusCode, Header[] headers, byte[] responseBody) {
+                            lti("lunk", this.getRequestURI().toString());
+                            poll();
+                        }
 
+                        @Override
+                        public void onFailure(int statusCode, Header[] headers, byte[] responseBody, Throwable error) {
+                            lte("lunk", this.getRequestURI().toString(), "nodice");
+                            lte("lunk", new String(responseBody),"returnedThis");
+                            lte("lunk", Integer.toString(statusCode), error);
+                            poll();
+                        }
+                    });
+        } catch (Exception e) {
+            lte("lunk", "Oops", e);
+        }
+    }
+    public void link() {
+        try {
+            JSONObject jo = new JSONObject();
+            jo.put("status", "Online");
+            hMSG();
+            ac.put(null, "https://" + hmsg + "/v1/users/ME/presenceDocs/messagingService",
+                    new ByteArrayEntity(jo.toString().getBytes()), "application/json; ver=1.0;",
+                    new AsyncHttpResponseHandler() {
+                        @Override
+                        public void onSuccess(int statusCode, Header[] headers, byte[] responseBody) {
+                            lunk();
+                        }
+
+                        @Override
+                        public void onFailure(int statusCode, Header[] headers, byte[] responseBody, Throwable error) {
+                            lte("link", this.getRequestURI().toString(), "nodice");
+                            lte("link", new String(responseBody),"returnedThis");
+                            lte("link", Integer.toString(statusCode), error);
+                            lunk();
+                        }
+                    });
+
+        } catch (Exception e) {
+            lte("link","Oops",e);
+            lunk();
+        }
+    }
     public void sync() {
-        if (rtok.contentEquals("")) {
+        if (!rtok.contentEquals("")) {
             token();
         } else {
             getid();
@@ -403,7 +573,7 @@ public class SkypeClient {
             public void onSuccess(int statusCode, Header[] headers, String s) {
                 stok=rbgv(s,"skypetoken");
                 if(stok!=null)
-                    sync();
+                    token();
                 else
                     lte("doauth","Here's where I should be showing you a reCaptcha","CAPTCHANotImpl");
             }
